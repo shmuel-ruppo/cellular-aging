@@ -1,0 +1,459 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This file performs the main regression for all objects (lapply)
+
+
+```{r}
+RES_SAVE <- F # Whether to save the results. False when do not want to over-write.
+```
+
+
+```{r label = "Libraries", echo=F}
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(SingleCellExperiment)
+  library(mclust)
+  library(dplyr)
+  library(Matrix)
+  library(ggplot2)
+  library(rgl)
+  #library(destiny)
+  library(TLMoments)
+  #BiocManager::install("glmGamPoi")
+  library(glmGamPoi)
+  #remotes::install_github("mojaveazure/seurat-disk")
+  library(SeuratDisk)
+  library(patchwork)
+  library(ggiraph)
+  library(ggiraphExtra)
+  library(plyr)
+  library(dplyr)
+  library(tidyr)
+  library(glue)
+  library(orthogene)
+})
+```
+
+```{r}
+# Attach t-cells and b-cells (from same object)
+attach("../data/Hagit_6clusters_Blood_New_Annotated_createSubset.RData")
+tempvar_Tcell <- scBlood_anotated_Tcells_meth
+tempdelme_Bcell <- scBlood_anotated_Bcells_meth # This is the only variable we need from the RData file
+detach("file:../data/Hagit_6clusters_Blood_New_Annotated_createSubset.RData")
+scBlood_anotated_Tcells_meth <- tempvar_Tcell
+scBlood_anotated_Bcells_meth <- tempdelme_Bcell
+rm(tempvar_Tcell)
+rm(tempdelme_Bcell)
+
+# Attach subtypes of tcells
+attach("../data/Hagit_6clusters_Blood_New_Annotated_TcellSubtypes_createSubset.RData")
+delmevar_memEffect <- scBlood_anotated_memEffectTcells 
+delmevar_naiveT <- scBlood_anotated_naiveTcells 
+detach("file:../data/Hagit_6clusters_Blood_New_Annotated_TcellSubtypes_createSubset.RData")
+scBlood_anotated_memEffectTcells <- delmevar_memEffect
+scBlood_anotated_naiveTcells <- delmevar_naiveT
+rm(delmevar_memEffect)
+rm(delmevar_naiveT)
+
+
+# Attach muscle cells
+attach("../data/scMuscle_filtNAage_merged_Hagit.RData")
+tempdelme_Muscle <- scMuscle_filtNAage # This is the only variable we need from the RData file
+detach("file:../data/scMuscle_filtNAage_merged_Hagit.RData")
+scBlood_anotated_Muscle_meth <- tempdelme_Muscle
+rm(tempdelme_Muscle)
+```
+
+```{r}
+# Make the metadata in muscle cells to fit the metadata names as in all other objects
+
+colnames(scBlood_anotated_Muscle_meth@meta.data)[colnames(scBlood_anotated_Muscle_meth@meta.data)=="polycomb.Island.mean.methylation"] <- "polycomb_islands_mean_methylation"
+
+colnames(scBlood_anotated_Muscle_meth@meta.data)[colnames(scBlood_anotated_Muscle_meth@meta.data)=="chronological.age..weeks."] <- "Chronological_age"
+```
+
+
+
+```{r}
+allSeuratObj <- list(Tcells = scBlood_anotated_Tcells_meth, Tcells_memory_effector = scBlood_anotated_memEffectTcells, Tcells_naive = scBlood_anotated_naiveTcells, Bcells = scBlood_anotated_Bcells_meth, Muscle_cells = scBlood_anotated_Muscle_meth)
+```
+
+
+```{r}
+# Double check that we are using SCT, and extract data
+
+allSeuratObj %>% lapply(DefaultAssay)
+
+allSeurat <- allSeuratObj %>% lapply(function(d) {
+  DefaultAssay(d) <- "SCT"
+  d
+  })
+
+# Extract gene expression matrix
+allExprs <- allSeuratObj %>% lapply(GetAssayData,slot = "data") %>% lapply(function(d) d %>% as.matrix() %>% t() %>% as.data.frame() )
+
+
+```
+
+
+
+```{r label = "Prepare the data for lm"}
+cat("\nBefore filtering dimensions are (cells in rows, genes in columns): \n")
+allExprs %>% lapply(dim)
+
+
+# genes expressed in at least 25% of the cells -
+allExprs_filtered <- allExprs %>% lapply(function(d) {
+  # Calculate the number of values above 0 in each column
+  above_threshold_count <- colSums(d > 0)
+  # Create a logical vector indicating columns with at least a quarter values above 0
+  selected_columns <- above_threshold_count >= (0.25 * nrow(d))
+
+  # Subset the matrix based on the selected columns
+  d_filtered <- d[, c(selected_columns)]
+  
+  d_filtered
+})
+
+cat("\nAfter filtering dimensions are (cells in rows, genes in columns): \n")
+allExprs_filtered %>% lapply(dim)
+
+```
+
+
+
+
+
+
+
+```{r }
+
+allExprs_filtered  <- allExprs_filtered %>% names() %>% lapply(function(i) {
+  
+  if(!all(allExprs_filtered[[i]] %>% rownames() == allSeuratObj[[i]]@meta.data %>% rownames() ) )
+    stop("Row names should have been identical!")
+  
+  allExprs_filtered[[i]] %>% mutate(Polycomb_m = allSeuratObj[[i]]$polycomb_islands_mean_methylation,Age= allSeuratObj[[i]]$Chronological_age) %>% relocate(Polycomb_m, Age) %>% filter(!is.na(Polycomb_m) & !is.na(Age))
+  }) %>% setNames(allExprs_filtered %>% names())
+
+
+cat("\nAfter filtering out cells where daya on is not avialable (cells in rows, genes in columns): \n")
+allExprs_filtered %>% lapply(dim)
+
+
+```
+
+```{r}
+allExprs_filtered %>% names()
+allExprs_filtered %>% lapply(head)
+```
+
+
+```{r}
+
+# Draw Correlation between methylation age and chronological age
+
+
+
+allExprs_filtered %>% names() %>% lapply(function(i) {
+  d <- allExprs_filtered[[i]]
+  
+  sp.cor <- cor(d$Polycomb_m, d$Age, use="complete.obs", method="spearman")
+
+  
+  boxplot(Polycomb_m~Age, data=d, main=paste0(i, "\nPolycomb methylation distribution by chronological age \nSpearman correlation: ", sp.cor %>% round(2)), horizontal=T) %>% print()
+
+
+  
+}) %>% invisible()
+
+
+allExprs_filtered %>% names() %>% lapply(function(i) {
+  d <- allExprs_filtered[[i]]
+  
+  cat(paste0("\n", i, ":"))
+  cat("\nPearson cor: ")
+  cor(d$Polycomb_m, d$Age,  use="complete.obs", method="pearson") %>% cat()
+  cat("\nSpearman cor: ")
+  cor.test(d$Polycomb_m, d$Age, use="complete.obs", method="spearman") %>% print()
+  
+}) %>% invisible()
+```
+
+
+
+# Create an artificial Summary Ribosomal Gene
+
+```{r}
+#Average Ribosomal Gene"
+
+
+allExprs_filtered <- allExprs_filtered %>% lapply(function(d) d %>% mutate(RP_averageGene = rowMeans(select(., starts_with("RPL", ignore.case=T) | starts_with("RPS", ignore.case=T)))))
+```
+
+
+
+
+```{r label = "Set age to be numeric!"}
+
+# Further preparation of regression
+
+
+# Should this be done? 
+allExprs_filtered <- allExprs_filtered %>% lapply(function(d) d %>% mutate(Age=as.numeric(Age)))
+```
+
+# Run model with *both* regressors
+
+```{r label = "lm : expression ~ polycomb + chronolochical_age"}
+# Run regression
+
+all_lm <- allExprs_filtered %>% lapply( function(datByCellType) {
+  
+    gene_names <- datByCellType %>% colnames() %>% setdiff(c("Age", "Polycomb_m"))
+  
+    lm_bygene <- gene_names %>% lapply(function(g) {
+  
+      Gene <- datByCellType[, g]
+      Polycomb_m <- datByCellType[, "Polycomb_m"]
+      Age <- datByCellType[, "Age"]
+  
+    
+      # Calculate lm
+      new_model.v2 <- lm(Gene ~ Polycomb_m + Age)
+      summary.new_model.v2 <- summary(new_model.v2)
+      summary.new_model.v2$lm <- new_model.v2
+      
+      summary.new_model.v2$summary_standard <- QuantPsyc::lm.beta(new_model.v2)
+      
+      return(summary.new_model.v2)
+
+  }) %>% setNames(gene_names)
+}) %>% setNames(allExprs_filtered %>% names())
+```
+# Run model with polycomb only
+
+```{r label = "lm : expression ~ polycomb "}
+polycombOnly_all_lm <- allExprs_filtered %>% lapply( function(datByCellType) {
+  
+    gene_names <- datByCellType %>% colnames() %>% setdiff(c("Age", "Polycomb_m"))
+  
+    lm_bygene <- gene_names %>% lapply(function(g) {
+  
+      Gene <- datByCellType[, g]
+      Polycomb_m <- datByCellType[, "Polycomb_m"]
+
+    
+      # Calculate lm
+      new_model.v2 <- lm(Gene ~ Polycomb_m)
+      summary.new_model.v2 <- summary(new_model.v2)
+      summary.new_model.v2$lm <- new_model.v2
+      
+      summary.new_model.v2$summary_standard <- QuantPsyc::lm.beta(new_model.v2)
+      
+      return(summary.new_model.v2)
+
+  }) %>% setNames(gene_names)
+}) %>% setNames(allExprs_filtered %>% names())
+
+
+```
+
+
+# Run model with chronological age only
+```{r}
+
+ChronAge_all_lm <- allExprs_filtered %>% lapply( function(datByCellType) {
+  
+    gene_names <- datByCellType %>% colnames() %>% setdiff(c("Age", "Polycomb_m"))
+  
+    lm_bygene <- gene_names %>% lapply(function(g) {
+  
+      Gene <- datByCellType[, g]
+      Age <- datByCellType[, "Age"]
+  
+    
+      # Calculate lm
+      new_model.v2 <- lm(Gene ~ Age)
+      summary.new_model.v2 <- summary(new_model.v2)
+      summary.new_model.v2$lm <- new_model.v2
+      
+      summary.new_model.v2$summary_standard <- QuantPsyc::lm.beta(new_model.v2)
+      
+      return(summary.new_model.v2)
+
+  }) %>% setNames(gene_names)
+}) %>% setNames(allExprs_filtered %>% names())
+
+```
+
+
+# Extract data from model with *both* regressors
+```{r label = "Extract data from model summary"}
+extract_lm <- all_lm %>% lapply(function(celltype) {
+  
+  
+  extract <- celltype %>% sapply(function(l) {
+    
+    res_coef <- coef(l)
+    res_coef_std <- l$summary_standard
+    
+    res_summary <- c()
+    
+    
+    res_summary["Intercept_Estimate"] <- res_coef["(Intercept)", "Estimate"]
+    res_summary["Intercept_Pvalue"] <- res_coef["(Intercept)", "Pr(>|t|)"]
+    
+    
+    res_summary["PolycombM_Coefficient_Estimate"] <- res_coef["Polycomb_m", "Estimate"]
+    res_summary["PolycombM_Coefficient_Estimate_Standardized"] <- res_coef_std["Polycomb_m"]
+    res_summary["PolycombM_Coefficient_Pvalue"] <- res_coef["Polycomb_m", "Pr(>|t|)"]
+    
+    
+    
+    
+    res_summary["Age_Coefficient_Estimate"] <- res_coef["Age", "Estimate"]
+    res_summary["Age_Coefficient_Estimate_Standardized"] <- res_coef_std["Age"]
+    res_summary["Age_Coefficient_Pvalue"] <- res_coef["Age", "Pr(>|t|)"]
+    
+    
+    res_summary["R_squared"] <- l$r.squared
+     
+    # F-stat calc from output from https://stat.ethz.ch/pipermail/r-help/2009-April/387091.html
+    res_summary["F_stat"] <- pf(l$fstatistic["value"], l$fstatistic["numdf"], l$fstatistic["dendf"], lower.tail=F) %>% unlist()
+    res_summary["R_squared_adj"] <- l$adj.r.squared
+    res_summary
+  })  %>% t() %>% as.data.frame() %>% mutate(Gene=rownames(.)) %>% relocate(Gene)
+  
+  
+  extract <- extract %>% mutate(PolycombM_Coefficient_Padj= p.adjust(extract$PolycombM_Coefficient_Pvalue, method = "BH")) %>% relocate(PolycombM_Coefficient_Padj, .after=PolycombM_Coefficient_Pvalue)
+  extract <- extract %>% mutate(Age_Coefficient_Padj = p.adjust(Age_Coefficient_Pvalue, method = "BH")) %>% relocate(Age_Coefficient_Padj, .after=Age_Coefficient_Pvalue)
+
+  extract$Gene2 <- sub("^(.*-)([^-]+)$", "\\1_SPLIT_HERE_\\2", extract$Gene, perl = TRUE)
+  # Split the "Cells" column into two columns
+  extract <- separate(extract, Gene2, into = c("Gene_Symbol", "ENSMBL"), sep = "_SPLIT_HERE_", remove = FALSE) %>% select(-Gene2)
+  extract$Gene_Symbol <- sub(".$", "", extract$Gene_Symbol)
+  
+  extract
+
+}) %>% setNames(all_lm %>% names() )
+
+
+
+
+```
+
+# Extract polycombOnly lm
+```{r}
+
+polycombOnly_extract_lm <- polycombOnly_all_lm %>% lapply(function(celltype) {
+  
+  
+  extract <- celltype %>% sapply(function(l) {
+    
+    res_coef <- coef(l)
+    res_coef_std <- l$summary_standard
+    
+    res_summary <- c()
+    
+    
+    res_summary["Intercept_Estimate"] <- res_coef["(Intercept)", "Estimate"]
+    res_summary["Intercept_Pvalue"] <- res_coef["(Intercept)", "Pr(>|t|)"]
+    
+    res_summary["PolycombM_Coefficient_Estimate"] <- res_coef["Polycomb_m", "Estimate"]
+    res_summary["PolycombM_Coefficient_Estimate_Standardized"] <- res_coef_std["Polycomb_m"]
+    res_summary["PolycombM_Coefficient_Pvalue"] <- res_coef["Polycomb_m", "Pr(>|t|)"]
+    
+    
+    res_summary["R_squared"] <- l$r.squared
+     
+    # F-stat calc from output from https://stat.ethz.ch/pipermail/r-help/2009-April/387091.html
+    res_summary["F_stat"] <- pf(l$fstatistic["value"], l$fstatistic["numdf"], l$fstatistic["dendf"], lower.tail=F) %>% unlist()
+    res_summary["R_squared_adj"] <- l$adj.r.squared
+    res_summary
+  })  %>% t() %>% as.data.frame() %>% mutate(Gene=rownames(.)) %>% relocate(Gene)
+  
+  
+  extract <- extract %>% mutate(PolycombM_Coefficient_Padj= p.adjust(extract$PolycombM_Coefficient_Pvalue, method = "BH")) %>% relocate(PolycombM_Coefficient_Padj, .after=PolycombM_Coefficient_Pvalue)
+
+  extract$Gene2 <- sub("^(.*-)([^-]+)$", "\\1_SPLIT_HERE_\\2", extract$Gene, perl = TRUE)
+  # Split the "Cells" column into two columns
+  extract <- separate(extract, Gene2, into = c("Gene_Symbol", "ENSMBL"), sep = "_SPLIT_HERE_", remove = FALSE) %>% select(-Gene2)
+  extract$Gene_Symbol <- sub(".$", "", extract$Gene_Symbol)
+  
+  extract
+
+}) %>% setNames(all_lm %>% names() )
+```
+
+
+```{r}
+ChronAge_extract_lm <- ChronAge_all_lm %>% lapply(function(celltype) {
+  
+  
+  extract <- celltype %>% sapply(function(l) {
+    
+    res_coef <- coef(l)
+    res_coef_std <- l$summary_standard
+    
+    res_summary <- c()
+    
+    
+    res_summary["Intercept_Estimate"] <- res_coef["(Intercept)", "Estimate"]
+    res_summary["Intercept_Pvalue"] <- res_coef["(Intercept)", "Pr(>|t|)"]
+    
+    
+    res_summary["Age_Coefficient_Estimate"] <- res_coef["Age", "Estimate"]
+    res_summary["Age_Coefficient_Estimate_Standardized"] <- res_coef_std["Age"]
+    res_summary["Age_Coefficient_Pvalue"] <- res_coef["Age", "Pr(>|t|)"]
+    
+    
+    res_summary["R_squared"] <- l$r.squared
+     
+    # F-stat calc from output from https://stat.ethz.ch/pipermail/r-help/2009-April/387091.html
+    res_summary["F_stat"] <- pf(l$fstatistic["value"], l$fstatistic["numdf"], l$fstatistic["dendf"], lower.tail=F) %>% unlist()
+    res_summary["R_squared_adj"] <- l$adj.r.squared
+    res_summary
+  })  %>% t() %>% as.data.frame() %>% mutate(Gene=rownames(.)) %>% relocate(Gene)
+  
+  
+  extract <- extract %>% mutate(Age_Coefficient_Padj = p.adjust(Age_Coefficient_Pvalue, method = "BH")) %>% relocate(Age_Coefficient_Padj, .after=Age_Coefficient_Pvalue)
+
+  extract$Gene2 <- sub("^(.*-)([^-]+)$", "\\1_SPLIT_HERE_\\2", extract$Gene, perl = TRUE)
+  # Split the "Cells" column into two columns
+  extract <- separate(extract, Gene2, into = c("Gene_Symbol", "ENSMBL"), sep = "_SPLIT_HERE_", remove = FALSE) %>% select(-Gene2)
+  extract$Gene_Symbol <- sub(".$", "", extract$Gene_Symbol)
+  
+  extract
+
+}) %>% setNames(ChronAge_all_lm %>% names() )
+
+
+
+
+```
+
+
+# Save results
+```{r label = "save results"}
+
+if(RES_SAVE) {
+ extract_lm %>% names() %>% sapply( function(e) {
+     write.csv(extract_lm[[e]], file = paste0("res_v4/", e, "_lmRes_extended.csv"), row.names=F, quote=F)
+   }   ) %>% invisible()
+  
+   polycombOnly_extract_lm %>% names() %>% sapply( function(e) {
+     write.csv(polycombOnly_extract_lm[[e]], file = paste0("res_v4/polycombONLY_", e, "_lmRes_extended.csv"), row.names=F, quote=F) }) %>% invisible()
+     
+        ChronAge_extract_lm %>% names() %>% sapply( function(e) {
+     write.csv(ChronAge_extract_lm[[e]], file = paste0("res_v4/chronAgeONLY_", e, "_lmRes_extended.csv"), row.names=F, quote=F)
+          
+          
+   }   ) %>% invisible()
+  
+}
+```
+

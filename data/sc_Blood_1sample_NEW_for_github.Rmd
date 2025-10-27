@@ -1,0 +1,187 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r label = "Libraries"}
+library(Seurat)
+library(SingleCellExperiment)
+library(mclust)
+library(dplyr)
+library(Matrix)
+library(ggplot2)
+library(rgl)
+#library(destiny)
+library(TLMoments)
+library(sctransform)
+#devtools::install_github("satijalab/seurat", ref = "develop")
+#BiocManager::install("glmGamPoi")
+library(glmGamPoi)
+#remotes::install_github("mojaveazure/seurat-disk")
+library(SeuratDisk)
+library(patchwork)
+library(ggiraph)
+library(ggiraphExtra)
+library(plyr)
+
+library(dplyr)
+library(tidyr)
+
+toGRCm38_Ens89 <- function(genes) {
+  paste0("GRCm38_Ens89_", genes)
+}
+
+
+
+```
+
+```{r label = "convert ENSMBL to SYMBOL and some filtering" }
+matBlood <- as.matrix(read.table("sc_MT_Babraham_Blood_aging_Matrix.txt"))
+colnames(matBlood) <- gsub("EpiAge","",colnames(matBlood))
+colnames(matBlood) <- gsub(".cram","",colnames(matBlood))
+
+# convert to gene symbol
+matBlood_converted <- matBlood
+df_gene_converter <- data.frame("ENSEMBL" = rownames(matBlood))
+############# convert ENSMBLE
+library("EnsDb.Mmusculus.v79")
+
+# Convert from ensembl.gene to gene.symbol
+ensembl.genes <- df_gene_converter$ENSEMBL
+geneIDsconverted <- ensembldb::select(EnsDb.Mmusculus.v79, keys= ensembl.genes, keytype = "GENEID", columns = c("SYMBOL","GENEID"))
+df_gene_converter <- merge(df_gene_converter, geneIDsconverted, by.x = "ENSEMBL", by.y = "GENEID", all.x = TRUE)
+df_gene_converter$EnsSymb <- paste0(df_gene_converter$SYMBOL,"-",df_gene_converter$ENSEMBL)
+
+for (i in seq_along(df_gene_converter$ENSEMBL)) {
+  original_name <- df_gene_converter$ENSEMBL[i]
+  replacement_name <- df_gene_converter$EnsSymb[i]
+  
+  # Check if the original name is present in the row names of the matrix
+  if (original_name %in% rownames(matBlood_converted)) {
+    # Replace the row name with the replacement name
+    rownames(matBlood_converted)[rownames(matBlood_converted) == original_name] <- replacement_name
+  } else {
+    # Handle the case where the original name is not found in the matrix
+    warning(paste("Original name '", original_name, "' not found in matrix row names."))
+  }
+}
+
+#############################################################
+
+matBlood <- Matrix(matBlood_converted, sparse=TRUE)
+
+min_genes <- 1500
+min_cells <-3
+scBlood <- CreateSeuratObject(counts = matBlood, min.cells = 3, min.features = 1500, project = "scBlood")
+paste0("Began analysis with ", dim(matBlood)[2], " cells and ", dim(matBlood)[1], " genes")
+paste0("After filtering cells with less than ", ceiling(min_genes), " genes,",
+       "and genes with less than ", ceiling(min_cells), " cells:")
+paste0("Working on ", length(scBlood@assays$RNA@cells), " cells and ", length(scBlood@assays$RNA@features), " genes")
+
+```
+
+```{r label = "VlnPlot, filtering and SCTransform"}
+
+scBlood[["percent.mito"]] <- PercentageFeatureSet(scBlood, pattern = "^mt-")
+
+nUMI_scBlood <- scBlood@meta.data$nCount_RNA
+nGene_scBlood <- scBlood@meta.data$nFeature_RNA
+scBlood <- AddMetaData(scBlood, nUMI_scBlood, "nUMI")
+scBlood <- AddMetaData(scBlood, nGene_scBlood, "nGene")
+
+VlnPlot(object=scBlood, features = c("nGene","nUMI", "percent.mito"))
+
+scBlood <- subset(x=scBlood, subset = nGene <  4700 & nUMI <850000 & percent.mito < 15)
+paste0("\nAfter filtering cells with less than 850000 UMIs, less than 4700 genes and less than 0.15 perc.mito")
+paste0("Working on ", length(scBlood@assays$RNA@cells), " cells and ", length(scBlood@assays$RNA@features), " genes")
+
+scBlood <- SCTransform(scBlood, vst.flavor = "v2",  verbose = FALSE)
+```
+
+```{r label = "annotation and VlnPlot on ages"}
+paper_anno <- read.csv("annotations.csv")
+
+paper_anno$Sample.ID <- gsub("Aligned.out_counts.txt", "", paper_anno$Sample.ID)
+paper_anno$Sample.ID <- substr(paper_anno$Sample.ID, nchar(paper_anno$Sample.ID)-6, nchar(paper_anno$Sample.ID))
+rownames(paper_anno) <- paper_anno$Sample.ID
+
+# In addition - correct the Methlation_age column
+paper_anno$Methlation_age <- gsub(" ", "", paper_anno$Methlation_age)
+levels(as.factor(paper_anno$Methlation_age))
+
+scBlood_annotated <- AddMetaData(scBlood, paper_anno)
+
+table(scBlood_annotated$Chronological_age)
+
+VlnPlot(object=scBlood_annotated, features = c("nGene", "nUMI","percent.mito"), split.by = "Chronological_age")#
+
+scBlood_noNA <- subset(scBlood_annotated, subset = Chronological_age != " ")
+VlnPlot(object=scBlood_noNA, features = c("nGene", "nUMI","percent.mito"), split.by = "Chronological_age", cols = c("brown2", "cyan3", "yellow2", "lightgreen"))#
+```
+
+```{r label = "Clustering"}
+scBlood_annotated <- RunPCA(scBlood_annotated, features = VariableFeatures(object = scBlood_annotated))
+ElbowPlot(scBlood_annotated, ndims = 50)
+scBlood_annotated <- RunUMAP(scBlood_annotated, dims = 1:20)
+
+DimPlot(scBlood_annotated)
+
+scBlood_annotated <- FindNeighbors(scBlood_annotated, reduction = "pca", dims = 1:20)
+scBlood_annotated <- FindClusters(scBlood_annotated, resolution = 0.4)
+
+DefaultAssay(scBlood_annotated) <- "SCT"
+DimPlot(scBlood_annotated, reduction = "umap", label = TRUE, repel = TRUE)
+```
+
+```{r label = "Cell Annotation"}
+#------------------------------- Tcell_markers ------------------------------
+#Tcell_markers <- c("Cd3e", "Cd3d", "Cd3g")#, "ENSMUSG00000032093-Ptprc")
+Tcell_markers <- c("Cd3e-ENSMUSG00000032093", "Cd3d-ENSMUSG00000032094", "Cd3g-ENSMUSG00000002033")
+relevants_Tcell_marker_for_score <-  as.vector(expressedGenes(scBlood_annotated, Tcell_markers))
+relevants_Tcell_marker_for_score <- list(relevants_Tcell_marker_for_score)
+scBlood_annotated <- AddModuleScore(object=scBlood_annotated, assay="SCT", features = relevants_Tcell_marker_for_score, name = "Tcell_markers")
+FeaturePlot(scBlood_annotated, features = "Tcell_markers1", cols = c("grey","blue"), label=TRUE, pt.size = 0.5,min.cutoff="0.0",max.cutoff= "q95")
+
+#------------------------------- Bcell_markers ------------------------------
+#Bcell_markers <- c("Cd19", "Cd79a", "Cd79b")#, "ENSMUSG00000032093-Ptprc")
+Bcell_markers <- c("Cd19-ENSMUSG00000030724", "Cd79a-ENSMUSG00000003379", "Cd79b-ENSMUSG00000040592")#, "ENSMUSG00000032093-Ptprc")
+relevants_Bcell_marker_for_score <-  as.vector(expressedGenes(scBlood_annotated, Bcell_markers))
+relevants_Bcell_marker_for_score <- list(relevants_Bcell_marker_for_score)
+scBlood_annotated <- AddModuleScore(object=scBlood_annotated, assay="SCT", features = relevants_Bcell_marker_for_score, name = "Bcell_markers")
+FeaturePlot(scBlood_annotated, features = "Bcell_markers1", cols = c("grey","blue"), label=TRUE, pt.size = 0.5,min.cutoff="0.0",max.cutoff= "q95")
+
+# #------------------------------- NK cells ------------------------------
+#FeaturePlot(CA4_filt_copy, features = "Ncr1", cols = c("grey","blue"), label=TRUE, pt.size = 0.5,min.cutoff="0.0",max.cutoff= "q95")
+FeaturePlot(scBlood_annotated, features = "Ncr1-ENSMUSG00000062524", cols = c("grey","blue"), label=TRUE, pt.size = 0.5,min.cutoff="0.0",max.cutoff= "q95") + labs(title ="NK cells")
+
+FeaturePlot(scBlood_annotated, features = "Itgam-ENSMUSG00000030786", cols = c("grey","blue"), label=TRUE, pt.size = 0.5,min.cutoff="0.0",max.cutoff= "q9") + labs(title = "Itgam (cd11b)")
+```
+
+Cluster 5 appear to be monocyte cells
+```{r label = "Cell Annotation continued"}
+#### markers for cluster 5
+DefaultAssay(scBlood_annotated) <- "SCT"
+scBlood_annotated <- PrepSCTFindMarkers(scBlood_annotated)
+marker_cluster5 <- FindMarkers(scBlood_annotated,  ident.1 = 5,  assay = "SCT", verbose = FALSE)
+# write.csv(marker_cluster5[marker_cluster5$p_val_adj<0.05,], "cluster5_markers.csv")
+```
+
+
+```{r label = "Assigning cell type identity to clusters"}
+new.cluster.ids <- c("B cells","T cells", "T cells","B cells", "NK cells", "Monocytes")
+
+names(new.cluster.ids) <- levels(scBlood_annotated)
+scBlood_annotated <- RenameIdents(scBlood_annotated, new.cluster.ids)
+DimPlot(scBlood_annotated, reduction = "umap", label = TRUE, pt.size = 0.5)
+
+scBlood_annotated$myCell.Type <- Idents(scBlood_annotated)
+
+DimPlot(scBlood_annotated, reduction = "umap", label = TRUE, pt.size = 0.5)
+
+table(scBlood_annotated$myCell.Type, scBlood_annotated$Cell.type)
+table(scBlood_annotated$Methlation_age, scBlood_annotated$Cell.type)
+table(scBlood_annotated$Methlation_age, scBlood_annotated$myCell.Type)
+
+save(list = ls(), file = "Hagit_6clusters_Blood_New.RData")
+
+```

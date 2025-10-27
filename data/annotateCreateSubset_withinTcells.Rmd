@@ -1,0 +1,157 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+Create subsetted Seurat object per each relevant T-cell subtype
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(SeuratDisk)
+  library(dplyr)
+})
+```
+```{r}
+SAVE_RES<-T
+
+initial_file <- "Hagit_6clusters_Blood_New.RData"
+
+# The below is the results file.
+annotated_file <- "Hagit_6clusters_Blood_New_Annotated_TcellSubtypes_createSubset.RData"
+```
+
+
+```{r}
+load(initial_file)
+```
+
+```{r}
+table(scBlood_annotated@meta.data$myCell.Type, scBlood_annotated@meta.data$Cell.type, useNA ="ifany"  )
+```
+
+
+# Add tcell subtype
+
+```{r}
+scBlood_annotated@meta.data <- scBlood_annotated@meta.data %>% mutate(Tcell_subtype = if_else(Cell.type %in% c("NveCD4T", "NveCD8TT"), "Naive_Tcells", ifelse(Cell.type %in% c("EffCD4T", "MemCD4T", "MemCD8T"), "Memory_and_Effector_Tcells", "Other")))
+```
+
+
+
+```{r}
+table(scBlood_annotated@meta.data$myCell.Type, scBlood_annotated@meta.data$Tcell_subtype )
+table(scBlood_annotated@meta.data$Cell.type, scBlood_annotated@meta.data$Tcell_subtype )
+
+```
+
+```{r}
+# This is a function to recreate the t-cells from the very original matrix
+# This chunk ia the only difference between this annotation and the original annotate.Rmd
+
+source("createSubset.R")
+
+
+naiveT_cells_names <- subset(scBlood_annotated ,subset=Tcell_subtype == "Naive_Tcells" & myCell.Type == "T cells")@assays$SCT@data %>% colnames()
+
+memEffectT_cells_names <- subset(scBlood_annotated ,subset=Tcell_subtype == "Memory_and_Effector_Tcells"& myCell.Type == "T cells")@assays$SCT@data %>% colnames()
+
+naiveT_cells_names %>% length()
+memEffectT_cells_names %>% length()
+```
+
+
+```{r}
+scBlood_anotated_naiveTcells <- matBlood %>% createSubset(naiveT_cells_names, metadata=scBlood_annotated@meta.data)
+scBlood_anotated_memEffectTcells <- matBlood %>% createSubset(memEffectT_cells_names, metadata=scBlood_annotated@meta.data)
+
+```
+
+
+
+```{r }
+############ Naive T cells
+scBlood_anotated_naiveTcells <- scBlood_anotated_naiveTcells %>% FindVariableFeatures(nfeatures = 2000)
+
+
+scBlood_anotated_naiveTcells <- scBlood_anotated_naiveTcells %>% RunPCA() %>% RunUMAP(dims = 1:30)
+scBlood_anotated_naiveTcells %>% ElbowPlot( ndims = 50)
+
+DimPlot(scBlood_anotated_naiveTcells)
+
+############ Memory effect cells
+
+scBlood_anotated_memEffectTcells <- scBlood_anotated_memEffectTcells %>%FindVariableFeatures (nfeatures = 2000)
+
+
+scBlood_anotated_memEffectTcells <- RunPCA(scBlood_anotated_memEffectTcells) %>% RunUMAP(dims = 1:30)
+ElbowPlot(scBlood_anotated_memEffectTcells, ndims = 50)
+
+DimPlot(scBlood_anotated_memEffectTcells)
+```
+
+Add Methylation mean values to metadata
+
+```{r label = "Add methylation mean values"}
+paper_anno <- read.csv("annotations.csv")
+
+paper_anno$plateID <- paper_anno$Sample.ID
+paper_anno$cellID <- paper_anno$Sample.ID
+
+paper_anno$cellID <- gsub("Aligned.out_counts.txt", "", paper_anno$cellID)
+paper_anno$cellID <- substr(paper_anno$cellID, nchar(paper_anno$cellID)-6, nchar(paper_anno$cellID))
+rownames(paper_anno) <- paper_anno$cellID
+
+paper_anno$plateID <- substr(paper_anno$plateID, 7, 21)
+convert_plateID_cellID <- paper_anno[c("plateID", "cellID")]
+
+#read the methylation mean values files :
+Tcells_meth <- read.table("polycomb_mean_methylation_values_Tcells.txt", header = TRUE)
+#CD4cells_meth <- read.table("polycomb_mean_methylation_values_CD4_cells.txt", header = TRUE)
+#CD8cells_meth <- read.table("polycomb_mean_methylation_values_CD8_cells.txt", header = TRUE)
+
+dim(Tcells_meth)
+#dim(CD4cells_meth)
+#dim(CD8cells_meth)
+
+Tcells_meth <- merge(Tcells_meth, convert_plateID_cellID, by.x = "sample_name", by.y = "plateID")
+#CD4cells_meth <- merge(CD4cells_meth, convert_plateID_cellID, by.x = "sample_name", by.y = "plateID")
+#CD8cells_meth <- merge(CD8cells_meth, convert_plateID_cellID, by.x = "sample_name", by.y = "plateID")
+
+dim(Tcells_meth)
+
+rownames(Tcells_meth) <- Tcells_meth$cellID
+#rownames(CD4cells_meth) <- CD4cells_meth$cellID
+#rownames(CD8cells_meth) <- CD8cells_meth$cellID
+```
+
+
+```{r}
+scBlood_anotated_naiveTcells <- scBlood_anotated_naiveTcells %>% AddMetaData(Tcells_meth)
+scBlood_anotated_memEffectTcells <- scBlood_anotated_memEffectTcells %>% AddMetaData(Tcells_meth)
+
+#scBlood_anotated_CD4cells_meth <- AddMetaData(scBlood_anotated_Tcells, CD4cells_meth)
+#scBlood_anotated_CD8cells_meth <- AddMetaData(scBlood_anotated_Tcells, CD8cells_meth)
+
+
+```
+
+```{r}
+
+scBlood_anotated_memEffectTcells@meta.data %>% dim()
+scBlood_anotated_naiveTcells@meta.data %>% dim()
+
+scBlood_anotated_naiveTcells@meta.data
+scBlood_anotated_memEffectTcells@meta.data
+
+```
+
+```{r}
+if(SAVE_RES)
+  save.image(annotated_file)
+```
+
+
+

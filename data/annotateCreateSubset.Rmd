@@ -1,0 +1,110 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Create subsetted Seurat object per each relevant cell-type
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(SeuratDisk)
+  library(dplyr)
+})
+```
+
+```{r}
+initial_file <- "Hagit_6clusters_Blood_New.RData"
+
+# The below is the results file.
+
+annotated_file <- "Hagit_6clusters_Blood_New_Annotated_createSubset.RData"
+```
+
+
+```{r}
+load(initial_file)
+```
+
+
+```{r}
+source("createSubset.R")
+
+
+T_cells_names <- subset(scBlood_annotated ,ident = "T cells")@assays$SCT@data %>% colnames()
+B_cells_names <- subset(scBlood_annotated ,ident = "B cells")@assays$SCT@data %>% colnames()
+
+
+scBlood_anotated_Tcells <- createSubset(matBlood, T_cells_names, metadata=scBlood_annotated@meta.data)
+scBlood_anotated_Bcells <- createSubset(matBlood, B_cells_names, metadata=scBlood_annotated@meta.data)
+```
+
+
+
+```{r }
+############ T cells
+scBlood_anotated_Tcells <- FindVariableFeatures(scBlood_anotated_Tcells, nfeatures = 2000)
+
+
+scBlood_anotated_Tcells <- RunPCA(scBlood_anotated_Tcells) %>% RunUMAP(dims = 1:30)
+ElbowPlot(scBlood_anotated_Tcells, ndims = 50)
+
+DimPlot(scBlood_anotated_Tcells)
+
+############ B cells
+
+
+scBlood_anotated_Bcells <- FindVariableFeatures(scBlood_anotated_Bcells, nfeatures = 2000)
+
+
+scBlood_anotated_Bcells <- RunPCA(scBlood_anotated_Bcells) %>% RunUMAP(dims = 1:30)
+ElbowPlot(scBlood_anotated_Bcells, ndims = 50)
+
+DimPlot(scBlood_anotated_Bcells)
+```
+
+Add Methylation mean values to metadata
+```{r label = "Add methylation mean values"}
+
+paper_anno <- read.csv("annotations.csv")
+
+paper_anno$plateID <- paper_anno$Sample.ID
+paper_anno$cellID <- paper_anno$Sample.ID
+
+paper_anno$cellID <- gsub("Aligned.out_counts.txt", "", paper_anno$cellID)
+paper_anno$cellID <- substr(paper_anno$cellID, nchar(paper_anno$cellID)-6, nchar(paper_anno$cellID))
+rownames(paper_anno) <- paper_anno$cellID
+
+paper_anno$plateID <- substr(paper_anno$plateID, 7, 21)
+convert_plateID_cellID <- paper_anno[c("plateID", "cellID")]
+
+#read the methylation mean values files :
+Bcells_meth <- read.table("polycomb_mean_methylation_values_Bcells.txt", header = TRUE)
+Tcells_meth <- read.table("polycomb_mean_methylation_values_Tcells.txt", header = TRUE)
+#CD4cells_meth <- read.table("polycomb_mean_methylation_values_CD4_cells.txt", header = TRUE)
+#CD8cells_meth <- read.table("polycomb_mean_methylation_values_CD8_cells.txt", header = TRUE)
+
+dim(Bcells_meth)
+dim(Tcells_meth)
+
+Bcells_meth <- merge(Bcells_meth, convert_plateID_cellID, by.x = "sample_name", by.y = "plateID")
+Tcells_meth <- merge(Tcells_meth, convert_plateID_cellID, by.x = "sample_name", by.y = "plateID")
+
+dim(Bcells_meth)
+dim(Tcells_meth)
+
+rownames(Bcells_meth) <- Bcells_meth$cellID
+rownames(Tcells_meth) <- Tcells_meth$cellID
+
+scBlood_anotated_Bcells_meth <- AddMetaData(scBlood_anotated_Bcells, Bcells_meth)
+scBlood_anotated_Tcells_meth <- AddMetaData(scBlood_anotated_Tcells, Tcells_meth)
+
+```
+
+
+```{r}
+save.image(annotated_file)
+```
+
+

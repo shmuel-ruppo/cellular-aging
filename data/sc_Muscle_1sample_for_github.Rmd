@@ -1,0 +1,116 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(Seurat)
+library(SingleCellExperiment)
+library(mclust)
+library(dplyr)
+library(Matrix)
+library(ggplot2)
+#library(destiny)
+library(TLMoments)
+library(sctransform)
+#devtools::install_github("satijalab/seurat", ref = "develop")
+#BiocManager::install("glmGamPoi")
+library(glmGamPoi)
+#remotes::install_github("mojaveazure/seurat-disk")
+library(SeuratDisk)
+library(patchwork)
+library(dplyr)
+library(tidyr)
+
+toGRCm38_Ens89 <- function(genes) {
+  paste0("GRCm38_Ens89_", genes)
+}
+
+
+```
+
+```{r}
+url <- "https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE121364&format=file&file=GSE121364%5FTable%5Fraw%5Fcounts%5FRNA%5FQSC%2Etxt%2Egz"
+
+download.file(url, "GSE121364_Table_raw_counts_RNA_QSC.txt.gz", mode = "wb") 
+R.utils::gunzip("GSE121364_Table_raw_counts_RNA_QSC.txt.gz", remove = TRUE, overwrite = FALSE)   
+```
+
+```{r}
+matMuscle <- read.table("GSE121364_Table_raw_counts_RNA_QSC.txt", header = TRUE)
+rownames(matMuscle) <- paste(matMuscle$geneName, matMuscle$chr, matMuscle$start, sep = "_")
+matMuscle <- matMuscle[,-c(1,2,3)]
+
+colnames(matMuscle) <- substr(colnames(matMuscle), nchar(colnames(matMuscle))-59, nchar(colnames(matMuscle))-49)
+colnames(matMuscle) <- sub("_$", "", colnames(matMuscle))
+colnames(matMuscle) <- gsub("_Y","Y", colnames(matMuscle))
+colnames(matMuscle) <- gsub("_O","O", colnames(matMuscle))
+sum(duplicated(colnames(matMuscle)))
+
+matMuscle <- as.matrix(matMuscle)
+matMuscle <- Matrix(matMuscle, sparse=TRUE)
+
+min_genes <- 200
+min_cells <-3
+scMuscle <- CreateSeuratObject(counts = matMuscle, min.cells = 3, min.features = 200, project = "Control")
+
+paste0("Began analysis with ", dim(matMuscle)[2], " cells and ", dim(matMuscle)[1], " genes")
+paste0("After filtering cells with less than ", ceiling(min_genes), " genes,",
+                  "and genes with less than ", ceiling(min_cells), " cells:")
+paste0("Working on ", length(scMuscle@assays$RNA@cells), " cells and ", length(scMuscle@assays$RNA@features), " genes")
+```
+
+```{r}
+
+nUMI_scMuscle <- scMuscle@meta.data$nCount_RNA
+nGene_scMuscle <- scMuscle@meta.data$nFeature_RNA
+scMuscle <- AddMetaData(scMuscle, nUMI_scMuscle, "nUMI")
+scMuscle <- AddMetaData(scMuscle, nGene_scMuscle, "nGene")
+
+VlnPlot(object=scMuscle, features = c("nGene","nUMI"))
+```
+
+```{r}
+
+scMuscle <-  SCTransform(scMuscle, vst.flavor = "v2",  verbose = FALSE)
+```
+
+```{r}
+scMuscle <- RunPCA(scMuscle, features = VariableFeatures(object = scMuscle))
+ElbowPlot(scMuscle, ndims = 50)
+scMuscle <- RunUMAP(scMuscle, dims = 1:30)
+
+DimPlot(scMuscle)
+
+scMuscle <- FindNeighbors(scMuscle, reduction = "pca", dims = 1:30)
+scMuscle <- FindClusters(scMuscle, resolution = 0.4)
+
+DefaultAssay(scMuscle) <- "SCT"
+
+DimPlot(scMuscle, reduction = "umap", label = TRUE, repel = TRUE)
+DimPlot(scMuscle, group.by = c("orig.ident"), combine = FALSE)
+
+```
+
+# Combine with Methylation_age_polycomb 
+```{r}
+
+Methylation_age <- read.csv("polycomb islands mean methylation after removing low quality samples_merged.csv", header = TRUE)
+
+Methylation_age$sample.name <- substr(Methylation_age$sample.name, 12, nchar(Methylation_age$sample.name) - 4)
+
+cells_obj <- colnames(scMuscle)
+cells_hagit <- Methylation_age$sample.name
+
+exists_in_obj <- cells_hagit %in% cells_obj
+cells_hagit[exists_in_obj]
+
+rownames(Methylation_age) <- Methylation_age$sample.name
+
+scMuscle <- AddMetaData(scMuscle, Methylation_age)
+
+scMuscle_filtNAage <- subset(scMuscle, subset = polycomb.Island.mean.methylation != "NA")
+length(scMuscle_filtNAage$orig.ident)
+
+save(scMuscle_filtNAage, file = "scMuscle_filtNAage_merged_Hagit.RData")
+```
