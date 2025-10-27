@@ -6,21 +6,21 @@ Files description:
 
 _sc_MT_Babraham_Blood_aging_Matrix.txt_: Initial data matrix.
 
-_sc_Blood_1sample_NEW_for_github.Rmd _: Initial exploration and cluster annotation.
+_sc_Blood_1sample_NEW_for_github.Rmd_: Initial exploration and cluster annotation.
 
-_sc_Muscle_1sample_for_github.Rmd _: Initial exploration of muscle cells.
+_sc_Muscle_1sample_for_github.Rmd_: Initial exploration of muscle cells.
 
-_annotateCreateSubset.Rmd, annotateCreateSubset_withinTcells.Rmd_ :
+_annotateCreateSubset.Rmd_, _annotateCreateSubset_withinTcells.Rmd_ :
 Subset the data by cell-types. 
 
 
 
 _createSubset.R_ : Helper script for subsetting
 
-_sc_MT_Babraham_Blood_aging_Matrix.txt _: Expression table
+_sc_MT_Babraham_Blood_aging_Matrix.txt_: Expression table
 
 
-_annotations.csv, polycomb_mean_methylation_values_Bcells.txt, polycomb_mean_methylation_values_Tcells.txt _:
+_annotations.csv_, _polycomb_mean_methylation_values_Bcells.txt_, _polycomb_mean_methylation_values_Tcells.txt_ :
 Cell metadata annotation, and mean methylation values. 
 
 
