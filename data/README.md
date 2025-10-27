@@ -1,4 +1,7 @@
-To prepare the data, run first sc_Blood_1sample_NEW_for_github.Rmd , sc_Muscle_1sample_for_github.Rmd. Then annotate and subset with annotateCreateSubset.Rmd , annotateCreateSubset_withinTcells.Rmd
+To prepare the data, run _first sc_Blood_1sample_NEW_for_github.Rmd_ and  _sc_Muscle_1sample_for_github.Rmd_. Then annotate and subset with _annotateCreateSubset.Rmd_ and  _annotateCreateSubset_withinTcells.Rmd_
+
+
+Files description:
 
 
 sc_MT_Babraham_Blood_aging_Matrix.txt: Initial data matrix.
