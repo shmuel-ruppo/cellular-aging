@@ -1,2 +1,2 @@
-Runs regression, for the different cell types.
+Perofrm the regression, for the different cell types.
 
