@@ -1,2 +1,2 @@
-Perofrm the regression, for the different cell types.
+Perform the regression - for the different cell types.
 
