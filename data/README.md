@@ -1,4 +1,4 @@
-To prepare the data, run _first sc_Blood_1sample_NEW_for_github.Rmd_ and  _sc_Muscle_1sample_for_github.Rmd_. Then annotate and subset with _annotateCreateSubset.Rmd_ and  _annotateCreateSubset_withinTcells.Rmd_
+To prepare the data, run first _sc_Blood_1sample_NEW_for_github.Rmd_ and  _sc_Muscle_1sample_for_github.Rmd_. Then annotate and subset with _annotateCreateSubset.Rmd_ and  _annotateCreateSubset_withinTcells.Rmd_
 
 
 Files description:
