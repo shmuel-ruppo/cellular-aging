@@ -7,7 +7,7 @@ This file performs the main regression for all objects (lapply)
 
 
 ```{r}
-RES_SAVE <- F # Whether to save the results. False when do not want to over-write.
+RES_SAVE <- T # Whether to save the results. False when do not want to over-write.
 ```
 
 
@@ -441,7 +441,12 @@ ChronAge_extract_lm <- ChronAge_all_lm %>% lapply(function(celltype) {
 ```{r label = "save results"}
 
 if(RES_SAVE) {
- extract_lm %>% names() %>% sapply( function(e) {
+ 
+  if(!dir.exists("res_v4")) {
+    dir.create("res_v4")
+  }
+
+  extract_lm %>% names() %>% sapply( function(e) {
      write.csv(extract_lm[[e]], file = paste0("res_v4/", e, "_lmRes_extended.csv"), row.names=F, quote=F)
    }   ) %>% invisible()
   
@@ -457,3 +462,6 @@ if(RES_SAVE) {
 }
 ```
 
+```{r}
+print(sessionInfo())     
+```

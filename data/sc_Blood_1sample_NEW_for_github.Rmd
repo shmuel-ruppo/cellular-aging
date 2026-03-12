@@ -32,6 +32,15 @@ toGRCm38_Ens89 <- function(genes) {
 }
 
 
+expressedGenes <- function(object, gene_list) {
+  relevant_genes <- c()
+  for (gene in gene_list) {
+       if (gene %in% rownames(object@assays$SCT@data)) {
+            relevant_genes <- c(relevant_genes, gene)
+  }
+ }
+relevant_genes
+}
 
 ```
 
@@ -184,4 +193,8 @@ table(scBlood_annotated$Methlation_age, scBlood_annotated$myCell.Type)
 
 save(list = ls(), file = "Hagit_6clusters_Blood_New.RData")
 
+```
+
+```{r}
+print(sessionInfo())     
 ```

@@ -107,4 +107,6 @@ scBlood_anotated_Tcells_meth <- AddMetaData(scBlood_anotated_Tcells, Tcells_meth
 save.image(annotated_file)
 ```
 
-
+```{r}
+print(sessionInfo())
+```

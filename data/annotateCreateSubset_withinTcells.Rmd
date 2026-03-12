@@ -155,3 +155,6 @@ if(SAVE_RES)
 
 
 
+```{r}
+print(sessionInfo())     
+```

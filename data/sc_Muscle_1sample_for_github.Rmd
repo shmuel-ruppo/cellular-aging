@@ -114,3 +114,7 @@ length(scMuscle_filtNAage$orig.ident)
 
 save(scMuscle_filtNAage, file = "scMuscle_filtNAage_merged_Hagit.RData")
 ```
+
+```{r}
+print(sessionInfo())     
+```
